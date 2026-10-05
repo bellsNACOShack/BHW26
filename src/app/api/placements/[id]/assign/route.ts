@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { badRequest, forbidden, getActor, loadAccessiblePlacement } from "@/lib/access";
+
+/** Each slot only accepts an account with the matching role. */
+const SLOT_ROLES = {
+  workplace_supervisor_id: { role: "workplace_supervisor", label: "workplace supervisor" },
+  academic_supervisor_id: { role: "academic_supervisor", label: "academic supervisor" },
+} as const;
 
 interface RouteParams {
   params: { id: string };
@@ -16,6 +23,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const { workplace_supervisor_id, academic_supervisor_id } = body;
 
     const supabase = getSupabaseAdmin();
+
+    // Students change their own placement, academic supervisors only one they're assigned to.
+    const placement = await loadAccessiblePlacement(await getActor(auth.user), params.id);
+    if (!placement) return forbidden("You can only assign supervisors on a placement you own or supervise.");
+
+    for (const [slot, { role, label }] of Object.entries(SLOT_ROLES)) {
+      const userId = body[slot];
+      if (!userId) continue;
+      const { data: account } = await supabase.from("users").select("role").eq("id", userId).maybeSingle();
+      if (!account) return badRequest(`No account matches that ${label} ID. Ask them to copy it from their dashboard.`);
+      if (account.role !== role) return badRequest(`That ID belongs to an account that isn't a ${label}.`);
+    }
 
     const updatePayload: Record<string, any> = {};
     if (workplace_supervisor_id !== undefined) {

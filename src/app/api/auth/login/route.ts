@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { verifyPassword, generateToken, UserRole } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { getUserScope } from "@/lib/users";
 
 export async function POST(request: NextRequest) {
   try {
@@ -85,6 +86,7 @@ export async function POST(request: NextRequest) {
         token,
         user: {
           ...safeUser,
+          ...(await getUserScope(user.id)),
           student_profile: studentProfile,
         },
       },

@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
+import { getActor, getDepartmentStudentIds } from "@/lib/access";
+import {
+  ACADEMIC_COMPLETED_STAGES,
+  ACADEMIC_PENDING_STAGES,
+  ITF_APPROVED_STAGES,
+  ITF_PENDING_STAGES,
+} from "@/features/placements/lib/lifecycle";
+
+/** Counts placements by logbook stage group. */
+function countStages(placements: { logbook_stage: string }[], stages: string[]) {
+  return placements.filter((p) => stages.includes(p.logbook_stage)).length;
+}
 
 export async function GET(request: NextRequest) {
   const auth = requireAuth(request);
@@ -41,14 +53,71 @@ export async function GET(request: NextRequest) {
           rejected_weeks: rejectedLogs,
         },
       });
-    } else if (role === "workplace_supervisor" || role === "academic_supervisor") {
-      const supervisorColumn =
-        role === "workplace_supervisor" ? "workplace_supervisor_id" : "academic_supervisor_id";
-
+    } else if (role === "academic_supervisor") {
+      const { data: placements } = await supabase
+        .from("placements")
+        .select("id, logbook_stage")
+        .eq("academic_supervisor_id", userId);
+      const rows = placements ?? [];
+      return NextResponse.json({
+        success: true,
+        role,
+        stats: {
+          assigned_students: rows.length,
+          pending_assessments: countStages(rows, ACADEMIC_PENDING_STAGES),
+          completed_assessments: countStages(rows, ACADEMIC_COMPLETED_STAGES),
+        },
+      });
+    } else if (role === "itf_verifier") {
+      const actor = await getActor(auth.user);
+      if (!actor.itf_office_id) {
+        return NextResponse.json({
+          success: true,
+          role,
+          stats: { office_students: 0, pending_scaf: 0, pending_logbooks: 0, approved_logbooks: 0, rejected_logbooks: 0 },
+        });
+      }
+      const [{ data: placements }, { count: pendingScaf }] = await Promise.all([
+        supabase.from("placements").select("id, logbook_stage").eq("itf_office_id", actor.itf_office_id),
+        supabase
+          .from("scaf_submissions")
+          .select("id", { count: "exact", head: true })
+          .eq("itf_office_id", actor.itf_office_id)
+          .in("status", ["submitted", "under_review"]),
+      ]);
+      const rows = placements ?? [];
+      return NextResponse.json({
+        success: true,
+        role,
+        stats: {
+          office_students: rows.length,
+          pending_scaf: pendingScaf ?? 0,
+          pending_logbooks: countStages(rows, ITF_PENDING_STAGES),
+          approved_logbooks: countStages(rows, ITF_APPROVED_STAGES),
+          rejected_logbooks: countStages(rows, ["itf_rejected"]),
+        },
+      });
+    } else if (role === "departmental_coordinator") {
+      const studentIds = await getDepartmentStudentIds(await getActor(auth.user));
+      const { data: placements } = studentIds.length
+        ? await supabase.from("placements").select("id, logbook_stage").in("student_id", studentIds)
+        : { data: [] as { id: string; logbook_stage: string }[] };
+      const rows = placements ?? [];
+      return NextResponse.json({
+        success: true,
+        role,
+        stats: {
+          department_students: studentIds.length,
+          awaiting_receipt: countStages(rows, ["department_submitted"]),
+          received_logbooks: countStages(rows, ["department_received"]),
+          archived_logbooks: countStages(rows, ["archived"]),
+        },
+      });
+    } else if (role === "workplace_supervisor") {
       const { data: placements } = await supabase
         .from("placements")
         .select("id, student_id")
-        .eq(supervisorColumn, userId);
+        .eq("workplace_supervisor_id", userId);
 
       const placementIds = (placements || []).map((p) => p.id);
 

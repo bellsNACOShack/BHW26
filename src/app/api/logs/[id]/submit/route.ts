@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { notifyUsers } from "@/lib/notifications";
+import { formatDate } from "@/lib/format";
+import { getSubmitOpensOn, todayYmd } from "@/features/logbook/lib/weeks";
 
 interface RouteParams {
   params: { id: string };
@@ -44,6 +47,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // A week is only complete once its last working day has arrived and can be logged.
+    const submitOpensOn = getSubmitOpensOn(logEntry);
+    if (todayYmd() < submitOpensOn) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid State",
+          message: `Week ${logEntry.week_number} can be submitted from ${formatDate(submitOpensOn)}, once every working day has been logged.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const { data: updated, error: updateError } = await supabase
       .from("log_entries")
       .update({ status: "submitted" })
@@ -65,6 +81,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       resourceId: params.id,
       metadata: { week_number: logEntry.week_number },
       ipAddress: request.headers.get("x-forwarded-for"),
+    });
+
+    const { data: placement } = await supabase
+      .from("placements")
+      .select("workplace_supervisor_id")
+      .eq("id", logEntry.placement_id)
+      .single();
+    await notifyUsers([placement?.workplace_supervisor_id], {
+      title: `Week ${logEntry.week_number} submitted for review`,
+      body: `${auth.user.fullName} submitted a week for your sign-off.`,
+      link: `/reviews/${logEntry.id}`,
     });
 
     return NextResponse.json({

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
+import { getAccessiblePlacementIds, getActor } from "@/lib/access";
 
 export async function GET(request: NextRequest) {
-  const auth = requireAuth(request, ["administrator", "academic_supervisor", "itf_verifier"]);
+  const auth = requireAuth(request, ["administrator", "academic_supervisor", "itf_verifier", "departmental_coordinator"]);
   if ("errorResponse" in auth) return auth.errorResponse;
 
   try {
@@ -17,6 +18,14 @@ export async function GET(request: NextRequest) {
       *,
       user:user_id (id, full_name, email, role)
     `);
+
+    // Non-administrators only see the trail of placements (and their entries) they can access.
+    const scope = await getAccessiblePlacementIds(await getActor(auth.user));
+    if (scope !== "all") {
+      if (scope.length === 0) return NextResponse.json({ success: true, count: 0, audit_logs: [] });
+      const { data: entries } = await supabase.from("log_entries").select("id").in("placement_id", scope);
+      query = query.in("resource_id", [...scope, ...(entries ?? []).map((e) => e.id)]);
+    }
 
     if (resourceType) {
       query = query.eq("resource_type", resourceType);

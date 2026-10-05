@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { getPlacementDateError } from "@/features/placements/lib/dates";
+import { isNigerianState } from "@/features/placements/lib/states";
+import { getAccessiblePlacementIds, getActor } from "@/lib/access";
+import { PLACEMENT_PEOPLE_SELECT, getItfOfficeIdForState, shapePlacement } from "@/lib/placements";
 
 export async function GET(request: NextRequest) {
   const auth = requireAuth(request);
@@ -9,21 +13,18 @@ export async function GET(request: NextRequest) {
 
   try {
     const supabase = getSupabaseAdmin();
-    let query = supabase.from("placements").select(`
-      *,
-      student:student_id (id, full_name, email),
-      workplace_supervisor:workplace_supervisor_id (id, full_name, email),
-      academic_supervisor:academic_supervisor_id (id, full_name, email)
-    `);
+    let query = supabase.from("placements").select(`*, ${PLACEMENT_PEOPLE_SELECT}`);
 
-    // Role-based visibility per PRD
-    if (auth.user.role === "student") {
-      query = query.eq("student_id", auth.user.userId);
-    } else if (auth.user.role === "workplace_supervisor") {
-      query = query.eq("workplace_supervisor_id", auth.user.userId);
-    } else if (auth.user.role === "academic_supervisor") {
-      query = query.eq("academic_supervisor_id", auth.user.userId);
+    // Role-based visibility: own / assigned / ITF office / department (see lib/access.ts)
+    const scope = await getAccessiblePlacementIds(await getActor(auth.user));
+    if (scope !== "all") {
+      if (scope.length === 0) return NextResponse.json({ success: true, placements: [] }, { status: 200 });
+      query = query.in("id", scope);
     }
+
+    // Optional lifecycle filter, e.g. ?logbook_stage=itf_submitted,itf_review
+    const stages = new URL(request.url).searchParams.get("logbook_stage");
+    if (stages) query = query.in("logbook_stage", stages.split(",").map((s) => s.trim()).filter(Boolean));
 
     const { data, error } = await query.order("created_at", { ascending: false });
 
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, placements: data }, { status: 200 });
+    return NextResponse.json({ success: true, placements: (data ?? []).map(shapePlacement) }, { status: 200 });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: "Internal Server Error", message: error.message },
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
       start_date,
       end_date,
       acceptance_letter_url,
+      organization_state,
       student_id: customStudentId,
     } = body;
 
@@ -65,6 +67,21 @@ export async function POST(request: NextRequest) {
           error: "Validation Error",
           message: "organization_name, organization_address, start_date, and end_date are required.",
         },
+        { status: 400 }
+      );
+    }
+
+    if (!isNigerianState(organization_state)) {
+      return NextResponse.json(
+        { success: false, error: "Validation Error", message: "Choose the state your organization is in.", field: "organization_state" },
+        { status: 400 }
+      );
+    }
+
+    const dateError = getPlacementDateError(start_date, end_date);
+    if (dateError) {
+      return NextResponse.json(
+        { success: false, error: "Validation Error", message: dateError.message, field: dateError.field },
         { status: 400 }
       );
     }
@@ -81,6 +98,9 @@ export async function POST(request: NextRequest) {
         start_date,
         end_date,
         acceptance_letter_url: acceptance_letter_url || null,
+        organization_state,
+        // Routed to the ITF area office serving the organization's state
+        itf_office_id: await getItfOfficeIdForState(organization_state),
         status: "active",
         scaf_status: "pending",
       })

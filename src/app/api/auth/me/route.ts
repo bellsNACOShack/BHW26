@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
+import { getUserScope } from "@/lib/users";
 
 export async function GET(request: NextRequest) {
   const auth = requireAuth(request);
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
         success: true,
         user: {
           ...user,
+          ...(await getUserScope(user.id)),
           student_profile: studentProfile,
         },
       },

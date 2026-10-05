@@ -40,3 +40,24 @@ export function computeLogEntryHash(entry: {
   };
   return computeSha256(payload);
 }
+
+/**
+ * Canonical integrity hash of a whole logbook: the placement plus every weekly
+ * entry's locked record hash. ITF and academic signatures seal this value, so any
+ * later change to a signed week no longer matches their signature.
+ */
+export function computeLogbookHash(
+  placement: { id: string; student_id: string; start_date: string; end_date: string },
+  entries: { week_number: number; record_hash: string | null }[]
+): string {
+  return computeSha256({
+    placement_id: placement.id,
+    student_id: placement.student_id,
+    start_date: placement.start_date,
+    end_date: placement.end_date,
+    weeks: [...entries]
+      .sort((a, b) => a.week_number - b.week_number)
+      .map((e) => `${e.week_number}:${e.record_hash ?? ""}`)
+      .join("|"),
+  });
+}

@@ -2,11 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  padding: 0;
-  margin: 0;
-  background-color: #ffffff;
-  color: #3b4151;
-  font-family: sans-serif;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 15%;
+    /* Grey panel that frames page content (Figma: content well behind white cards). */
+    --surface: 0 0% 95.5%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 15%;
+
+    /* Inter.log navy */
+    --brand: 220 46% 20%;
+    --brand-foreground: 0 0% 100%;
+    --primary: 220 46% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 25%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 52%;
+    /* Active navigation / selection tint */
+    --accent: 212 56% 92%;
+    --accent-foreground: 220 46% 20%;
+
+    --destructive: 358 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-soft: 0 85% 96%;
+    --success: 145 63% 36%;
+    --success-soft: 140 60% 94%;
+    --warning: 36 100% 30%;
+    --warning-soft: 50 100% 92%;
+    --info: 252 70% 58%;
+    --info-soft: 250 80% 96%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 89%;
+    --ring: 220 46% 20%;
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01";
+  }
 }

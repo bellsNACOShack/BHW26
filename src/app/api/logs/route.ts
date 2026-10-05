@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { formatDate } from "@/lib/format";
+import { getAccessiblePlacementIds, getActor } from "@/lib/access";
+import { getLockedDayEdits, getTotalWeeks, getWeekRange, hasWeekStarted } from "@/features/logbook/lib/weeks";
 
 export async function GET(request: NextRequest) {
   const auth = requireAuth(request);
@@ -21,8 +24,11 @@ export async function GET(request: NextRequest) {
       signatures (*)
     `);
 
-    if (auth.user.role === "student") {
-      query = query.eq("student_id", auth.user.userId);
+    // Only entries of placements the user can access (own / assigned / ITF office / department).
+    const scope = await getAccessiblePlacementIds(await getActor(auth.user));
+    if (scope !== "all") {
+      if (scope.length === 0) return NextResponse.json({ success: true, count: 0, logs: [] });
+      query = query.in("placement_id", scope);
     }
 
     if (placementId) {
@@ -87,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     const { data: placement } = await supabase
       .from("placements")
-      .select("id, student_id")
+      .select("id, student_id, start_date, end_date")
       .eq("id", placement_id)
       .single();
 
@@ -102,14 +108,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const weekNumber = Number(week_number);
+    if (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > getTotalWeeks(placement)) {
+      return NextResponse.json(
+        { success: false, error: "Validation Error", message: `Week ${week_number} is outside this placement.` },
+        { status: 400 }
+      );
+    }
+
+    // Week dates come from the placement, not the client, so they always match the calendar.
+    const range = getWeekRange(placement, weekNumber);
+    if (!hasWeekStarted(range)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Validation Error",
+          message: `Week ${week_number} starts on ${formatDate(range.start_date)}. You can log it once it begins.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const lockedDays = getLockedDayEdits(range, activities, null);
+    if (lockedDays.length) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Validation Error",
+          message: `You can't log ${lockedDays.join(", ")} yet. Days can only be logged once they arrive.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const { data: newEntry, error } = await supabase
       .from("log_entries")
       .insert({
         student_id: auth.user.userId,
         placement_id,
-        week_number,
-        start_date,
-        end_date,
+        week_number: weekNumber,
+        start_date: range.start_date,
+        end_date: range.end_date,
         activities: activities.trim(),
         skills: skills ? skills.trim() : null,
         tools: tools ? tools.trim() : null,

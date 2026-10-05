@@ -2,6 +2,8 @@
 -- Interlog: Digital SIWES Management and Verification Platform
 -- Database Schema for Supabase PostgreSQL
 -- Version: 1.0 (Strict PRD Compliance)
+-- After this file, run migrations/002_siwes_lifecycle.sql (ITF offices, SCAF,
+-- logbook lifecycle, grading, coordinators and notifications).
 -- ==============================================================================
 
 -- Enable UUID extension

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { canAccessPlacement, forbidden, getActor } from "@/lib/access";
+import { formatDate } from "@/lib/format";
+import { getLockedDayEdits, hasWeekStarted } from "@/features/logbook/lib/weeks";
 
 interface RouteParams {
   params: { id: string };
@@ -30,6 +33,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         { success: false, error: "Not Found", message: "Log entry not found." },
         { status: 404 }
       );
+    }
+
+    if (!logEntry.placement || !(await canAccessPlacement(await getActor(auth.user), logEntry.placement))) {
+      return forbidden("You don't have access to this log entry.");
     }
 
     return NextResponse.json({ success: true, log_entry: logEntry }, { status: 200 });
@@ -80,6 +87,31 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     const body = await request.json();
+
+    if (!hasWeekStarted(logEntry)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Forbidden",
+          message: `Week ${logEntry.week_number} starts on ${formatDate(logEntry.start_date)}. You can edit it once it begins.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (body.activities !== undefined) {
+      const lockedDays = getLockedDayEdits(logEntry, body.activities ?? "", logEntry.activities);
+      if (lockedDays.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Validation Error",
+            message: `You can't log ${lockedDays.join(", ")} yet. Days can only be logged once they arrive.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     const { data: updated, error } = await supabase
       .from("log_entries")

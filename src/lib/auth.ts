@@ -9,7 +9,8 @@ export type UserRole =
   | "workplace_supervisor"
   | "academic_supervisor"
   | "administrator"
-  | "itf_verifier";
+  | "itf_verifier"
+  | "departmental_coordinator";
 
 export interface TokenPayload {
   userId: string;

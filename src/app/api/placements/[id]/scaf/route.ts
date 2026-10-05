@@ -42,11 +42,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Only the student owner, admin, or ITF verifier can update SCAF status
-    const isOwner = auth.user.role === "student" && placement.student_id === auth.user.userId;
-    const isAuthorizedStaff = auth.user.role === "administrator" || auth.user.role === "itf_verifier";
-
-    if (!isOwner && !isAuthorizedStaff) {
+    // SCAF status now follows the digital SCAF review (POST /api/scaf/{id}/review);
+    // this manual override is kept for administrators only.
+    if (auth.user.role !== "administrator") {
       return NextResponse.json(
         { success: false, error: "Forbidden", message: "Not authorized to update this placement." },
         { status: 403 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { hashPassword, generateToken, UserRole } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { getUserScope } from "@/lib/users";
 
 const VALID_ROLES: UserRole[] = [
   "student",
@@ -9,6 +10,7 @@ const VALID_ROLES: UserRole[] = [
   "academic_supervisor",
   "administrator",
   "itf_verifier",
+  "departmental_coordinator",
 ];
 
 export async function POST(request: NextRequest) {
@@ -27,6 +29,8 @@ export async function POST(request: NextRequest) {
       department,
       program,
       level,
+      // ITF officers belong to an ITF office
+      itf_office_id,
     } = body;
 
     if (!email || !password || !full_name || !role) {
@@ -73,7 +77,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (role === "departmental_coordinator" && (!institution?.trim() || !department?.trim())) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Validation Error",
+          message: "institution and department are required for departmental coordinator accounts.",
+        },
+        { status: 400 }
+      );
+    }
+
     const supabase = getSupabaseAdmin();
+
+    if (role === "itf_verifier") {
+      const { data: office } = itf_office_id
+        ? await supabase.from("itf_offices").select("id").eq("id", itf_office_id).single()
+        : { data: null };
+      if (!office) {
+        return NextResponse.json(
+          { success: false, error: "Validation Error", message: "Choose the ITF office you work at." },
+          { status: 400 }
+        );
+      }
+    }
 
     // Check if user already exists
     const { data: existingUser } = await supabase
@@ -105,6 +132,8 @@ export async function POST(request: NextRequest) {
         role,
         phone_number: phone_number || null,
         avatar_url: avatar_url || null,
+        ...(role === "itf_verifier" ? { itf_office_id } : {}),
+        ...(role === "departmental_coordinator" ? { institution: institution.trim(), department: department.trim() } : {}),
       })
       .select("id, email, full_name, role, phone_number, avatar_url, created_at")
       .single();
@@ -165,6 +194,7 @@ export async function POST(request: NextRequest) {
         token,
         user: {
           ...newUser,
+          ...(await getUserScope(newUser.id)),
           student_profile: studentProfile,
         },
       },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
+import { notifyUsers } from "@/lib/notifications";
 
 interface RouteParams {
   params: { id: string };
@@ -10,7 +11,8 @@ interface RouteParams {
 const VALID_ACTIONS = ["approve", "reject", "request_changes"];
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const auth = requireAuth(request, ["workplace_supervisor", "academic_supervisor", "administrator"]);
+  // Weekly sign-off belongs to the industry (workplace) supervisor; academic supervisors act on the completed logbook.
+  const auth = requireAuth(request, ["workplace_supervisor", "administrator"]);
   if ("errorResponse" in auth) return auth.errorResponse;
 
   try {
@@ -46,10 +48,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Check supervisor authorization
     const placement = logEntry.placement;
     const isWorkplaceSupervisor = placement.workplace_supervisor_id === auth.user.userId;
-    const isAcademicSupervisor = placement.academic_supervisor_id === auth.user.userId;
     const isAdmin = auth.user.role === "administrator";
 
-    if (!isWorkplaceSupervisor && !isAcademicSupervisor && !isAdmin) {
+    if (!isWorkplaceSupervisor && !isAdmin) {
       return NextResponse.json(
         {
           success: false,
@@ -57,6 +58,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           message: "You are not assigned as a supervisor for this student placement.",
         },
         { status: 403 }
+      );
+    }
+
+    if (logEntry.status !== "submitted" && logEntry.status !== "under_review") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid State",
+          message: `Week ${logEntry.week_number} is '${logEntry.status}' and isn't waiting for review.`,
+        },
+        { status: 400 }
       );
     }
 
@@ -98,6 +110,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       metadata: { action, comments, week_number: logEntry.week_number },
       ipAddress: request.headers.get("x-forwarded-for"),
     });
+
+    if (newStatus === "rejected") {
+      await notifyUsers([logEntry.student_id], {
+        title: `Week ${logEntry.week_number} needs revision`,
+        body: comments || "Your supervisor returned this week for changes.",
+        link: `/logbook/${logEntry.id}`,
+      });
+    }
 
     return NextResponse.json({
       success: true,

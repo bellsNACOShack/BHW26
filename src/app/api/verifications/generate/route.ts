@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireAuth } from "@/lib/auth";
 import { computeSha256 } from "@/lib/hash";
 import { logAuditEvent } from "@/lib/audit";
+import { canAccessPlacement, forbidden, getActor } from "@/lib/access";
 
 export async function POST(request: NextRequest) {
   const auth = requireAuth(request, ["student", "administrator", "academic_supervisor"]);
@@ -39,11 +40,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (auth.user.role === "student" && placement.student_id !== auth.user.userId) {
-      return NextResponse.json(
-        { success: false, error: "Forbidden", message: "Not authorized for this placement." },
-        { status: 403 }
-      );
+    if (!(await canAccessPlacement(await getActor(auth.user), placement))) {
+      return forbidden("Not authorized for this placement.");
     }
 
     const approvedOrLockedLogs = placement.log_entries.filter(

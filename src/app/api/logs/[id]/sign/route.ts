@@ -9,7 +9,8 @@ interface RouteParams {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const auth = requireAuth(request, ["workplace_supervisor", "academic_supervisor", "administrator"]);
+  // Weekly signatures are the industry supervisor's; ITF and academic sign the whole logbook later.
+  const auth = requireAuth(request, ["workplace_supervisor", "administrator"]);
   if ("errorResponse" in auth) return auth.errorResponse;
 
   try {
@@ -55,10 +56,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const placement = logEntry.placement;
     const isWorkplaceSupervisor = placement.workplace_supervisor_id === auth.user.userId;
-    const isAcademicSupervisor = placement.academic_supervisor_id === auth.user.userId;
     const isAdmin = auth.user.role === "administrator";
 
-    if (!isWorkplaceSupervisor && !isAcademicSupervisor && !isAdmin) {
+    if (!isWorkplaceSupervisor && !isAdmin) {
       return NextResponse.json(
         {
           success: false,
@@ -66,6 +66,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           message: "You are not assigned as an authorized supervisor for this placement.",
         },
         { status: 403 }
+      );
+    }
+
+    if (logEntry.status !== "approved") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid State",
+          message: `Week ${logEntry.week_number} must be approved before it can be signed.`,
+        },
+        { status: 400 }
       );
     }
 
@@ -80,6 +91,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         signature_reference,
         passkey_credential_id: passkey_credential_id || null,
         content_hash: recordHash,
+        stage: "industry",
         ip_address: request.headers.get("x-forwarded-for"),
         user_agent: request.headers.get("user-agent"),
       })
